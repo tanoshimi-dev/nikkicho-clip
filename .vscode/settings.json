@@ -1,5 +1,0 @@
-{
-  "rust-analyzer.linkedProjects": [
-    "sys/win/Cargo.toml"
-  ]
-}

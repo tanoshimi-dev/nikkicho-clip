@@ -1,0 +1,30 @@
+[package]
+name = "nikkicho_clip"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.31", features = ["persistence"] }
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+arboard = { version = "3", features = ["image-data"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+global-hotkey = "0.6"
+tray-icon = "0.19"
+directories = "5"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = 2
+lto = true

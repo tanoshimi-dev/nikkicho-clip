@@ -66,6 +66,34 @@ fn main() -> eframe::Result<()> {
             visuals.window_corner_radius = egui::CornerRadius::same(8);
             cc.egui_ctx.set_visuals(visuals);
 
+            // Load Japanese font (Hiragino Sans W3) as fallback
+            let mut fonts = egui::FontDefinitions::default();
+            let font_paths = [
+                "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+            ];
+            for path in &font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "japanese_font".to_owned(),
+                        egui::FontData::from_owned(font_data).into(),
+                    );
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Proportional)
+                        .or_default()
+                        .push("japanese_font".to_owned());
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Monospace)
+                        .or_default()
+                        .push("japanese_font".to_owned());
+                    break;
+                }
+            }
+            cc.egui_ctx.set_fonts(fonts);
+
             // Shared visibility state for hotkey toggle
             let visible = Arc::new(AtomicBool::new(true));
 

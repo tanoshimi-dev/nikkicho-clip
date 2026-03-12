@@ -208,7 +208,9 @@ fn main() -> eframe::Result<()> {
             let visible_hotkey = visible.clone();
             std::thread::spawn(move || loop {
                 if let Ok(event) = GlobalHotKeyEvent::receiver().recv() {
-                    if event.id() == hotkey_id {
+                    if event.id() == hotkey_id
+                        && event.state() == global_hotkey::HotKeyState::Pressed
+                    {
                         toggle_window(&visible_hotkey);
                         ctx.request_repaint();
                     }

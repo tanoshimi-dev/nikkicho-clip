@@ -7,7 +7,7 @@ use eframe::egui;
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyManager};
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 
@@ -24,6 +24,8 @@ pub struct NikkichoClipApp {
     show_settings: bool,
     hotkey_input: String,
     settings_error: Option<String>,
+    visible: Arc<AtomicBool>,
+    force_quit: Arc<AtomicBool>,
 }
 
 impl NikkichoClipApp {
@@ -32,6 +34,8 @@ impl NikkichoClipApp {
         settings: AppSettings,
         hotkey_manager: Arc<Mutex<GlobalHotKeyManager>>,
         current_hotkey_id: Arc<AtomicU32>,
+        visible: Arc<AtomicBool>,
+        force_quit: Arc<AtomicBool>,
     ) -> Self {
         let clip_rx = monitor::start_monitor();
         let hotkey_input = settings.hotkey_string.clone();
@@ -48,6 +52,8 @@ impl NikkichoClipApp {
             show_settings: false,
             hotkey_input,
             settings_error: None,
+            visible,
+            force_quit,
         }
     }
 
@@ -162,6 +168,15 @@ impl NikkichoClipApp {
 
 impl eframe::App for NikkichoClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Intercept close: hide to tray unless force_quit
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if !self.force_quit.load(Ordering::SeqCst) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.visible.store(false, Ordering::SeqCst);
+            }
+        }
+
         self.process_clipboard_events();
 
         // Request repaint periodically to check for new clipboard content

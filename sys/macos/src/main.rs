@@ -40,6 +40,7 @@ fn main() -> eframe::Result<()> {
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
         .with_tooltip("Nikkicho Clip - Clipboard History")
+        .with_title("NC")
         .build()
         .ok();
 
@@ -96,6 +97,8 @@ fn main() -> eframe::Result<()> {
 
             // Shared visibility state for hotkey toggle
             let visible = Arc::new(AtomicBool::new(true));
+            // Force quit flag - only true when tray "Quit" is clicked
+            let force_quit = Arc::new(AtomicBool::new(false));
 
             // Handle hotkey events - toggle show/hide
             let ctx = cc.egui_ctx.clone();
@@ -122,6 +125,7 @@ fn main() -> eframe::Result<()> {
             // Handle tray menu events
             let ctx2 = cc.egui_ctx.clone();
             let visible_tray = Arc::clone(&visible);
+            let force_quit_tray = Arc::clone(&force_quit);
             std::thread::spawn(move || loop {
                 if let Ok(event) = MenuEvent::receiver().recv() {
                     if event.id() == &show_item_id {
@@ -130,6 +134,7 @@ fn main() -> eframe::Result<()> {
                         ctx2.send_viewport_cmd(egui::ViewportCommand::Focus);
                         ctx2.request_repaint();
                     } else if event.id() == &quit_item_id {
+                        force_quit_tray.store(true, Ordering::SeqCst);
                         ctx2.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 }
@@ -140,6 +145,8 @@ fn main() -> eframe::Result<()> {
                 settings,
                 hotkey_manager_app,
                 current_hotkey_id_app,
+                Arc::clone(&visible),
+                Arc::clone(&force_quit),
             )))
         }),
     )

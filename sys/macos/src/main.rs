@@ -2,25 +2,33 @@ mod app;
 mod clip_entry;
 mod history;
 mod monitor;
+mod settings;
 
 use app::NikkichoClipApp;
 use eframe::egui;
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use settings::AppSettings;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     TrayIconBuilder,
 };
 
 fn main() -> eframe::Result<()> {
-    // Register global hotkey: Ctrl+Shift+V
+    // Load settings
+    let settings = AppSettings::load();
+
+    // Register global hotkey from settings
     let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
-    let hotkey = HotKey::from_str("ctrl+shift+v").expect("Failed to parse hotkey");
+    let hotkey = HotKey::from_str(&settings.hotkey_string).expect("Failed to parse hotkey");
     hotkey_manager
         .register(hotkey)
-        .expect("Failed to register hotkey Ctrl+Shift+V");
+        .expect("Failed to register hotkey");
+
+    let hotkey_manager = Arc::new(Mutex::new(hotkey_manager));
+    let current_hotkey_id = Arc::new(AtomicU32::new(hotkey.id()));
 
     // Build system tray
     let tray_menu = Menu::new();
@@ -46,6 +54,9 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    let hotkey_manager_app = Arc::clone(&hotkey_manager);
+    let current_hotkey_id_app = Arc::clone(&current_hotkey_id);
+
     eframe::run_native(
         "Nikkicho Clip",
         options,
@@ -60,11 +71,12 @@ fn main() -> eframe::Result<()> {
 
             // Handle hotkey events - toggle show/hide
             let ctx = cc.egui_ctx.clone();
-            let hotkey_id = hotkey.id();
+            let current_id = Arc::clone(&current_hotkey_id);
             let visible_hotkey = Arc::clone(&visible);
             std::thread::spawn(move || loop {
                 if let Ok(event) = GlobalHotKeyEvent::receiver().recv() {
-                    if event.id() == hotkey_id && event.state() == HotKeyState::Pressed {
+                    let expected_id = current_id.load(Ordering::SeqCst);
+                    if event.id() == expected_id && event.state() == HotKeyState::Pressed {
                         let is_visible = visible_hotkey.load(Ordering::SeqCst);
                         if is_visible {
                             visible_hotkey.store(false, Ordering::SeqCst);
@@ -95,7 +107,12 @@ fn main() -> eframe::Result<()> {
                 }
             });
 
-            Ok(Box::new(NikkichoClipApp::new(cc)))
+            Ok(Box::new(NikkichoClipApp::new(
+                cc,
+                settings,
+                hotkey_manager_app,
+                current_hotkey_id_app,
+            )))
         }),
     )
 }

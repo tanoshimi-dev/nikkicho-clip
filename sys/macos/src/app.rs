@@ -1,9 +1,14 @@
 use crate::clip_entry::ClipContent;
 use crate::history::ClipHistory;
 use crate::monitor::{self, ClipEvent};
+use crate::settings::AppSettings;
 use arboard::Clipboard;
 use eframe::egui;
+use global_hotkey::{hotkey::HotKey, GlobalHotKeyManager};
 use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 
 pub struct NikkichoClipApp {
@@ -13,11 +18,23 @@ pub struct NikkichoClipApp {
     show_favorites_only: bool,
     image_textures: HashMap<String, egui::TextureHandle>,
     status_message: Option<(String, std::time::Instant)>,
+    settings: AppSettings,
+    hotkey_manager: Arc<Mutex<GlobalHotKeyManager>>,
+    current_hotkey_id: Arc<AtomicU32>,
+    show_settings: bool,
+    hotkey_input: String,
+    settings_error: Option<String>,
 }
 
 impl NikkichoClipApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        settings: AppSettings,
+        hotkey_manager: Arc<Mutex<GlobalHotKeyManager>>,
+        current_hotkey_id: Arc<AtomicU32>,
+    ) -> Self {
         let clip_rx = monitor::start_monitor();
+        let hotkey_input = settings.hotkey_string.clone();
         Self {
             history: ClipHistory::new(),
             clip_rx,
@@ -25,6 +42,12 @@ impl NikkichoClipApp {
             show_favorites_only: false,
             image_textures: HashMap::new(),
             status_message: None,
+            settings,
+            hotkey_manager,
+            current_hotkey_id,
+            show_settings: false,
+            hotkey_input,
+            settings_error: None,
         }
     }
 
@@ -111,6 +134,30 @@ impl NikkichoClipApp {
         self.image_textures.insert(id.to_string(), handle);
         Some(tex_id)
     }
+
+    fn change_hotkey(&mut self, new_hotkey_str: &str) -> Result<(), String> {
+        let new_hotkey = HotKey::from_str(new_hotkey_str)
+            .map_err(|e| format!("Invalid hotkey: {}", e))?;
+
+        let old_hotkey = HotKey::from_str(&self.settings.hotkey_string)
+            .map_err(|e| format!("Failed to parse old hotkey: {}", e))?;
+
+        let manager = self.hotkey_manager.lock().unwrap();
+        manager
+            .unregister(old_hotkey)
+            .map_err(|e| format!("Failed to unregister old hotkey: {}", e))?;
+        manager
+            .register(new_hotkey)
+            .map_err(|e| format!("Failed to register new hotkey: {}", e))?;
+        drop(manager);
+
+        self.current_hotkey_id
+            .store(new_hotkey.id(), Ordering::SeqCst);
+        self.settings.hotkey_string = new_hotkey_str.to_string();
+        self.settings.save();
+
+        Ok(())
+    }
 }
 
 impl eframe::App for NikkichoClipApp {
@@ -141,6 +188,12 @@ impl eframe::App for NikkichoClipApp {
                     self.history.clear_unpinned();
                     self.image_textures.clear();
                 }
+                ui.separator();
+                if ui.button("Settings").clicked() {
+                    self.show_settings = !self.show_settings;
+                    self.hotkey_input = self.settings.hotkey_string.clone();
+                    self.settings_error = None;
+                }
             });
 
             // Status message
@@ -153,6 +206,47 @@ impl eframe::App for NikkichoClipApp {
             }
             ui.add_space(4.0);
         });
+
+        // Settings window
+        if self.show_settings {
+            let mut show_settings = self.show_settings;
+            egui::Window::new("Settings")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut show_settings)
+                .show(ctx, |ui| {
+                    ui.label("Global Hotkey:");
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut self.hotkey_input);
+                        if ui.button("Apply").clicked() {
+                            let new_str = self.hotkey_input.clone();
+                            match self.change_hotkey(&new_str) {
+                                Ok(()) => {
+                                    self.settings_error = None;
+                                    self.status_message = Some((
+                                        format!("Hotkey changed to {}", new_str),
+                                        std::time::Instant::now(),
+                                    ));
+                                }
+                                Err(e) => {
+                                    self.settings_error = Some(e);
+                                }
+                            }
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new("Format: modifier+modifier+key (e.g. ctrl+shift+v)")
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                    if let Some(err) = &self.settings_error {
+                        ui.colored_label(egui::Color32::from_rgb(200, 80, 80), err);
+                    }
+                    ui.separator();
+                    ui.label(format!("Current: {}", self.settings.hotkey_string));
+                });
+            self.show_settings = show_settings;
+        }
 
         // Main content - scrollable list of clipboard entries
         egui::CentralPanel::default().show(ctx, |ui| {

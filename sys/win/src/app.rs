@@ -1,10 +1,12 @@
 use crate::clip_entry::ClipContent;
 use crate::history::ClipHistory;
 use crate::monitor::{self, ClipEvent};
+use crate::settings::{AppSettings, AVAILABLE_KEYS};
 use arboard::Clipboard;
 use eframe::egui;
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 
 pub struct NikkichoClipApp {
     history: ClipHistory,
@@ -13,11 +15,21 @@ pub struct NikkichoClipApp {
     show_favorites_only: bool,
     image_textures: HashMap<String, egui::TextureHandle>,
     status_message: Option<(String, std::time::Instant)>,
+    show_settings: bool,
+    settings: AppSettings,
+    settings_draft: AppSettings,
+    visible: Arc<AtomicBool>,
+    quit_requested: Arc<AtomicBool>,
 }
 
 impl NikkichoClipApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        visible: Arc<AtomicBool>,
+        quit_requested: Arc<AtomicBool>,
+    ) -> Self {
         let clip_rx = monitor::start_monitor();
+        let settings = AppSettings::load();
         Self {
             history: ClipHistory::new(),
             clip_rx,
@@ -25,6 +37,11 @@ impl NikkichoClipApp {
             show_favorites_only: false,
             image_textures: HashMap::new(),
             status_message: None,
+            show_settings: false,
+            settings_draft: settings.clone(),
+            settings,
+            visible,
+            quit_requested,
         }
     }
 
@@ -88,6 +105,82 @@ impl NikkichoClipApp {
         }
     }
 
+    fn render_settings_window(&mut self, ctx: &egui::Context) {
+        let mut show_settings = self.show_settings;
+        egui::Window::new("Settings")
+            .open(&mut show_settings)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(350.0)
+            .show(ctx, |ui| {
+                ui.heading("Shortcut Key");
+                ui.add_space(8.0);
+
+                ui.label(format!("Current: {}", self.settings.hotkey_display()));
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                ui.label("Modifiers:");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.settings_draft.hotkey_modifiers.ctrl, "Ctrl");
+                    ui.checkbox(&mut self.settings_draft.hotkey_modifiers.shift, "Shift");
+                    ui.checkbox(&mut self.settings_draft.hotkey_modifiers.alt, "Alt");
+                    ui.checkbox(&mut self.settings_draft.hotkey_modifiers.super_key, "Win");
+                });
+
+                ui.add_space(8.0);
+                ui.label("Key:");
+                egui::ComboBox::from_id_salt("hotkey_key_selector")
+                    .selected_text(&self.settings_draft.hotkey_key)
+                    .show_ui(ui, |ui| {
+                        for key in AVAILABLE_KEYS {
+                            ui.selectable_value(
+                                &mut self.settings_draft.hotkey_key,
+                                key.to_string(),
+                                *key,
+                            );
+                        }
+                    });
+
+                ui.add_space(8.0);
+                ui.label(format!("New shortcut: {}", self.settings_draft.hotkey_display()));
+
+                // Validate: at least one modifier required
+                let has_modifier = self.settings_draft.hotkey_modifiers.ctrl
+                    || self.settings_draft.hotkey_modifiers.shift
+                    || self.settings_draft.hotkey_modifiers.alt
+                    || self.settings_draft.hotkey_modifiers.super_key;
+
+                if !has_modifier {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 100, 100),
+                        "At least one modifier key is required.",
+                    );
+                }
+
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(has_modifier, egui::Button::new("Save"))
+                        .clicked()
+                    {
+                        self.settings = self.settings_draft.clone();
+                        self.settings.save();
+                        self.status_message = Some((
+                            "Settings saved. Restart the app to apply the new shortcut.".into(),
+                            std::time::Instant::now(),
+                        ));
+                        self.show_settings = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.show_settings = false;
+                    }
+                });
+            });
+        self.show_settings = show_settings;
+    }
+
     fn get_or_load_texture(
         &mut self,
         ctx: &egui::Context,
@@ -117,6 +210,18 @@ impl eframe::App for NikkichoClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_clipboard_events();
 
+        // Check if quit was requested from tray menu
+        if self.quit_requested.load(Ordering::SeqCst) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // Intercept close button (X): hide to tray instead of quitting
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            crate::hide_window(&self.visible);
+        }
+
         // Request repaint periodically to check for new clipboard content
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
@@ -141,6 +246,11 @@ impl eframe::App for NikkichoClipApp {
                     self.history.clear_unpinned();
                     self.image_textures.clear();
                 }
+                ui.separator();
+                if ui.button("Settings").clicked() {
+                    self.settings_draft = self.settings.clone();
+                    self.show_settings = !self.show_settings;
+                }
             });
 
             // Status message
@@ -153,6 +263,11 @@ impl eframe::App for NikkichoClipApp {
             }
             ui.add_space(4.0);
         });
+
+        // Settings window
+        if self.show_settings {
+            self.render_settings_window(ctx);
+        }
 
         // Main content - scrollable list of clipboard entries
         egui::CentralPanel::default().show(ctx, |ui| {

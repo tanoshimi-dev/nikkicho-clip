@@ -172,6 +172,36 @@ fn main() -> eframe::Result<()> {
             visuals.window_corner_radius = egui::CornerRadius::same(8);
             cc.egui_ctx.set_visuals(visuals);
 
+            // Load Japanese font so CJK characters render correctly
+            let mut fonts = egui::FontDefinitions::default();
+            let font_paths = [
+                "C:/Windows/Fonts/YuGothM.ttc",  // Yu Gothic Medium
+                "C:/Windows/Fonts/yugothic.ttf",  // Yu Gothic
+                "C:/Windows/Fonts/msgothic.ttc",  // MS Gothic
+                "C:/Windows/Fonts/meiryo.ttc",    // Meiryo
+            ];
+            for path in &font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "japanese".to_owned(),
+                        egui::FontData::from_owned(font_data).into(),
+                    );
+                    // Append to Proportional and Monospace so CJK glyphs are found as fallback
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Proportional)
+                        .or_default()
+                        .push("japanese".to_owned());
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Monospace)
+                        .or_default()
+                        .push("japanese".to_owned());
+                    break;
+                }
+            }
+            cc.egui_ctx.set_fonts(fonts);
+
             // Handle hotkey events - toggle show/hide
             let ctx = cc.egui_ctx.clone();
             let hotkey_id = hotkey.id();

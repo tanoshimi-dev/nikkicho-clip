@@ -5,20 +5,22 @@ mod monitor;
 
 use app::NikkichoClipApp;
 use eframe::egui;
-use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager};
+use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
     TrayIconBuilder,
 };
 
 fn main() -> eframe::Result<()> {
-    // Register global hotkey: Cmd+Shift+V (macOS convention)
+    // Register global hotkey: Ctrl+Shift+V
     let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
-    let hotkey = HotKey::from_str("super+shift+v").expect("Failed to parse hotkey");
+    let hotkey = HotKey::from_str("ctrl+shift+v").expect("Failed to parse hotkey");
     hotkey_manager
         .register(hotkey)
-        .expect("Failed to register hotkey Cmd+Shift+V");
+        .expect("Failed to register hotkey Ctrl+Shift+V");
 
     // Build system tray
     let tray_menu = Menu::new();
@@ -53,13 +55,25 @@ fn main() -> eframe::Result<()> {
             visuals.window_corner_radius = egui::CornerRadius::same(8);
             cc.egui_ctx.set_visuals(visuals);
 
-            // Handle hotkey events
+            // Shared visibility state for hotkey toggle
+            let visible = Arc::new(AtomicBool::new(true));
+
+            // Handle hotkey events - toggle show/hide
             let ctx = cc.egui_ctx.clone();
             let hotkey_id = hotkey.id();
+            let visible_hotkey = Arc::clone(&visible);
             std::thread::spawn(move || loop {
                 if let Ok(event) = GlobalHotKeyEvent::receiver().recv() {
-                    if event.id() == hotkey_id {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    if event.id() == hotkey_id && event.state() == HotKeyState::Pressed {
+                        let is_visible = visible_hotkey.load(Ordering::SeqCst);
+                        if is_visible {
+                            visible_hotkey.store(false, Ordering::SeqCst);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        } else {
+                            visible_hotkey.store(true, Ordering::SeqCst);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        }
                         ctx.request_repaint();
                     }
                 }
@@ -67,9 +81,12 @@ fn main() -> eframe::Result<()> {
 
             // Handle tray menu events
             let ctx2 = cc.egui_ctx.clone();
+            let visible_tray = Arc::clone(&visible);
             std::thread::spawn(move || loop {
                 if let Ok(event) = MenuEvent::receiver().recv() {
                     if event.id() == &show_item_id {
+                        visible_tray.store(true, Ordering::SeqCst);
+                        ctx2.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                         ctx2.send_viewport_cmd(egui::ViewportCommand::Focus);
                         ctx2.request_repaint();
                     } else if event.id() == &quit_item_id {

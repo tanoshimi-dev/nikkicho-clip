@@ -1,10 +1,13 @@
 use crate::clip_entry::ClipContent;
 use crate::history::ClipHistory;
 use crate::monitor::{self, ClipEvent};
+use crate::settings::AppSettings;
 use arboard::Clipboard;
 use eframe::egui;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 pub struct NikkichoClipApp {
     history: ClipHistory,
@@ -13,11 +16,23 @@ pub struct NikkichoClipApp {
     show_favorites_only: bool,
     image_textures: HashMap<String, egui::TextureHandle>,
     status_message: Option<(String, std::time::Instant)>,
+    settings: AppSettings,
+    show_settings: bool,
+    hotkey_input: String,
+    settings_status: Option<(String, bool)>, // (message, is_error)
+    visible: Arc<AtomicBool>,
+    force_quit: Arc<AtomicBool>,
 }
 
 impl NikkichoClipApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        settings: AppSettings,
+        visible: Arc<AtomicBool>,
+        force_quit: Arc<AtomicBool>,
+    ) -> Self {
         let clip_rx = monitor::start_monitor();
+        let hotkey_input = settings.hotkey_string.clone();
         Self {
             history: ClipHistory::new(),
             clip_rx,
@@ -25,6 +40,12 @@ impl NikkichoClipApp {
             show_favorites_only: false,
             image_textures: HashMap::new(),
             status_message: None,
+            settings,
+            show_settings: false,
+            hotkey_input,
+            settings_status: None,
+            visible,
+            force_quit,
         }
     }
 
@@ -111,10 +132,34 @@ impl NikkichoClipApp {
         self.image_textures.insert(id.to_string(), handle);
         Some(tex_id)
     }
+
+    /// Apply hotkey change via GNOME gsettings
+    fn apply_hotkey(&mut self, new_hotkey_str: &str) {
+        self.settings.hotkey_string = new_hotkey_str.to_string();
+        self.settings.save();
+        crate::register_gnome_shortcut(new_hotkey_str);
+        self.settings_status = Some((
+            format!("Hotkey set to: {}", new_hotkey_str),
+            false,
+        ));
+        self.status_message = Some((
+            format!("Hotkey changed to {}", new_hotkey_str),
+            std::time::Instant::now(),
+        ));
+    }
 }
 
 impl eframe::App for NikkichoClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Intercept close: hide to tray unless force_quit
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if !self.force_quit.load(Ordering::SeqCst) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.visible.store(false, Ordering::SeqCst);
+            }
+        }
+
         self.process_clipboard_events();
 
         // Request repaint periodically to check for new clipboard content
@@ -141,6 +186,12 @@ impl eframe::App for NikkichoClipApp {
                     self.history.clear_unpinned();
                     self.image_textures.clear();
                 }
+                ui.separator();
+                if ui.button("Settings").clicked() {
+                    self.show_settings = !self.show_settings;
+                    self.hotkey_input = self.settings.hotkey_string.clone();
+                    self.settings_status = None;
+                }
             });
 
             // Status message
@@ -153,6 +204,41 @@ impl eframe::App for NikkichoClipApp {
             }
             ui.add_space(4.0);
         });
+
+        // Settings window
+        if self.show_settings {
+            let mut show_settings = self.show_settings;
+            egui::Window::new("Settings")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut show_settings)
+                .show(ctx, |ui| {
+                    ui.label("Global Hotkey:");
+                    ui.horizontal(|ui| {
+                        ui.text_edit_singleline(&mut self.hotkey_input);
+                        if ui.button("Apply").clicked() {
+                            let new_str = self.hotkey_input.clone();
+                            self.apply_hotkey(&new_str);
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new("Format: modifier+modifier+key (e.g. ctrl+alt+v)")
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
+                    if let Some((msg, is_error)) = &self.settings_status {
+                        let color = if *is_error {
+                            egui::Color32::from_rgb(200, 80, 80)
+                        } else {
+                            egui::Color32::from_rgb(80, 200, 80)
+                        };
+                        ui.colored_label(color, msg);
+                    }
+                    ui.separator();
+                    ui.label(format!("Current: {}", self.settings.hotkey_string));
+                });
+            self.show_settings = show_settings;
+        }
 
         // Main content - scrollable list of clipboard entries
         egui::CentralPanel::default().show(ctx, |ui| {

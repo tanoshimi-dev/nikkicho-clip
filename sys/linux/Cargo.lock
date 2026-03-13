@@ -1639,22 +1639,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "global-hotkey"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41fbb3a4e56c901ee66c190fdb3fa08344e6d09593cc6c61f8eb9add7144b271"
-dependencies = [
- "crossbeam-channel",
- "keyboard-types",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "once_cell",
- "thiserror 2.0.18",
- "windows-sys 0.59.0",
- "x11-dl",
-]
-
-[[package]]
 name = "glow"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2448,11 +2432,11 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
- "global-hotkey",
  "gtk",
  "image",
  "serde",
  "serde_json",
+ "signal-hook",
  "tray-icon",
  "uuid",
 ]
@@ -3460,6 +3444,16 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "signal-hook"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
 
 [[package]]
 name = "signal-hook-registry"
